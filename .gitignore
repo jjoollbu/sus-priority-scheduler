@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Ambiente
+.env
+.env.*
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Banco de dados
+*.db
+*.sqlite
+*.sqlite3
+
+# Testes e ferramentas
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+
+# Sistema operacional
+.DS_Store
+Thumbs.db
