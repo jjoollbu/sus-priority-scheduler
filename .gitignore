@@ -13,7 +13,10 @@ venv/
 .streamlit/secrets.toml
 
 # Banco de dados
+dados/
 *.db
+*.db-wal
+*.db-shm
 *.sqlite
 *.sqlite3
 
