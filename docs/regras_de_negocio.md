@@ -8,6 +8,20 @@ O sistema simula uma fila de atendimento com prioridades. Ele não realiza avali
 
 As cores e os tempos abaixo são parâmetros acadêmicos configuráveis (`config.py`), sujeitos à validação da equipe e do docente.
 
+### 1.1 Fundamentação no SUS
+
+- **Origem:** o Ministério da Saúde criou em 2004 a Política Nacional de Humanização (PNH), que inclui entre seus métodos o Acolhimento com Avaliação e Classificação de Risco (AACR). Depois, o Protocolo de Classificação de Risco de Manchester foi reconhecido e adotado no Brasil.
+- **Tempos-alvo:** as 5 cores e os tempos da seção 2 são os do Protocolo de Manchester usados na rede pública — por exemplo, pela Secretaria de Saúde de Minas Gerais: vermelho imediato, laranja 10 min, amarelo 60 min, verde 120 min e azul 240 min.
+- **Quem classifica:** no serviço real, a classificação de risco é atividade privativa do enfermeiro (Resolução Cofen nº 661/2021). Por isso, no simulador, a cor é informada pelo operador: o sistema não faz avaliação clínica.
+- **Variações locais:** os tempos mudam entre protocolos e municípios (o POP de Classificação de Risco do Rio de Janeiro de 2024, por exemplo, usa 15 min para laranja e 30 min para amarelo; a cartilha da PNH usa 4 cores). Por isso os SLAs ficam em configuração.
+
+**Referências**
+
+- BRASIL. Ministério da Saúde. *HumanizaSUS: Política Nacional de Humanização*. Brasília, 2004.
+- CONSELHO FEDERAL DE ENFERMAGEM. *Resolução Cofen nº 661, de 9 de março de 2021*. Disponível em: <https://www.legisweb.com.br/legislacao/?id=410743>.
+- MINAS GERAIS. Agência Minas. *Saúde abre inscrições de capacitação sobre o Protocolo de Manchester*. Disponível em: <https://www.agenciaminas.mg.gov.br/noticia/saude-abre-inscricoes-de-capacitacao-sobre-o-protocolo-de-manchester-66964>.
+- RIO DE JANEIRO. RioSaúde. *POP — Classificação de Risco*, 2024. Disponível em: <https://riosaude.prefeitura.rio/wp-content/uploads/sites/66/2024/09/POP-Classificacao-de-Risco.pdf>.
+
 ## 2. Classificação simulada
 
 | Cor | Nível base | SLA simulado | Regra geral |
