@@ -1,34 +1,38 @@
 # Regras de negócio — Simulador de filas de prioridade
 
-> **Status: proposta para validação da equipe e do docente.** Este documento traduz o planejamento técnico v0.2 em regras testáveis. Os parâmetros numéricos não devem ser tratados como protocolo clínico oficial.
+> **Status: proposta v0.3 para validação da equipe e do docente.** Este documento traduz o Planejamento Técnico v0.3 em regras testáveis. Os parâmetros numéricos não devem ser tratados como protocolo clínico oficial.
 
 ## 1. Objetivo e limites
 
 O sistema simula uma fila de atendimento com prioridades. Ele não realiza avaliação clínica, não recomenda classificação de risco e não substitui o Protocolo de Manchester nem a atuação de profissionais habilitados. A classificação do paciente fictício é informada manualmente pelo operador da simulação.
 
-As cores e os tempos abaixo são parâmetros acadêmicos configuráveis, sujeitos à validação da equipe e do docente.
+As cores e os tempos abaixo são parâmetros acadêmicos configuráveis (`config.py`), sujeitos à validação da equipe e do docente.
 
 ## 2. Classificação simulada
 
 | Cor | Nível base | SLA simulado | Regra geral |
 |---|---:|---:|---|
-| Vermelho — emergência | 1 | 0 min (imediato) | Prioridade máxima; FIFO entre vermelhos |
-| Laranja — muito urgente | 2 | 10 min | Segundo nível; também é o piso proposto para aging |
-| Amarelo — urgente | 3 | 60 min | Pode ser promovido por aging |
-| Verde — pouco urgente | 4 | 120 min | Pode ser promovido por aging |
-| Azul — não urgente | 5 | 240 min | Pode ser promovido por aging |
+| Vermelho — emergência | 1 | 0 min (imediato) | Prioridade máxima; FIFO entre vermelhos; nunca é promovido nem ultrapassado |
+| Laranja — muito urgente | 2 | 10 min | Segundo nível; também é o piso do aging |
+| Amarelo — urgente | 3 | 60 min | Pode ser promovido até o nível 2 |
+| Verde — pouco urgente | 4 | 120 min | Pode ser promovido até o nível 2 |
+| Azul — não urgente | 5 | 240 min | Pode ser promovido até o nível 2 |
 
-**Pendente de confirmação:** os valores de SLA, a escala e a nomenclatura devem ser validados antes de serem apresentados como definitivos. Devem permanecer centralizados em configuração, sem espalhar números mágicos pelo código.
+**Vermelho com SLA de 0 min:** com a regra "atraso se espera > SLA" (seção 8), qualquer avanço do relógio com um Vermelho na fila já é atraso. Isso é intencional (emergência não espera). Para um Vermelho atrasado não esconder o desempenho das outras cores, o dashboard mostra o **% de SLA cumprido por cor**.
+
+**Validação de configuração:** níveis 2 a 5 precisam ter SLA maior que zero; caso contrário o cálculo do aging dividiria por zero. A aplicação recusa iniciar com uma configuração inválida.
+
+**Pendente de confirmação:** os valores de SLA, a escala e a nomenclatura devem ser validados com o docente antes de serem apresentados como definitivos.
 
 ## 3. Cadastro e entrada na fila
 
 1. O operador informa os dados do paciente fictício e seleciona uma classificação.
 2. O serviço cria o paciente com identificador único e instante de chegada obtido do relógio injetado.
-3. O paciente é inserido no fim da fila FIFO correspondente à sua classificação original.
-4. A operação gera um evento `ENTRADA` na auditoria.
-5. O evento deve registrar o tamanho da fila após a operação.
+3. O serviço grava o paciente e o evento `ENTRADA` numa única transação.
+4. **Somente após o commit**, o paciente é inserido no fim da fila FIFO da sua classificação original.
+5. O evento registra o estado da fila logo após a operação (seção 9).
 
-A camada de interface não deve implementar essas regras: deve apenas validar campos de apresentação e chamar o serviço de aplicação.
+A camada de interface não implementa essas regras: apenas valida campos de apresentação e chama o serviço de aplicação.
 
 ## 4. Ordenação e desempate
 
@@ -37,79 +41,107 @@ A ordem de atendimento é determinada pela chave:
 `(nível_efetivo, instante_de_chegada, id)`
 
 Critérios, nesta ordem:
+
 1. Menor nível efetivo tem prioridade.
 2. Em caso de mesmo nível efetivo, atende primeiro quem chegou antes (FIFO).
 3. Persistindo o empate, vence o menor identificador.
 
 O nível efetivo é calculado pela política de fairness no instante consultado. A classificação original do paciente não é alterada.
 
+**Por que basta comparar as 5 cabeças de fila:** dentro de uma mesma cor, o fator K e o SLA são iguais para todos. Quem chegou antes espera mais, logo tem nível efetivo menor ou igual e chegada menor. A cabeça de cada fila sempre vence o resto da sua própria fila.
+
 ## 5. Aging e prevenção de starvation
 
-A proposta técnica utiliza cinco filas FIFO (`collections.deque`), uma por cor, e uma política de aging que promove o nível efetivo conforme o tempo de espera.
+O sistema usa cinco filas FIFO (`collections.deque`), uma por cor, e uma política de aging que promove o nível efetivo conforme o tempo de espera.
 
-Fórmula proposta:
+Fórmula:
 
 `promocoes = floor(espera_minutos / (K * SLA_da_classificacao_original))`
 
 `nivel_efetivo = max(PISO, nivel_base - promocoes)`
 
-Restrições propostas:
-- Vermelho permanece no nível 1 e não é ultrapassado.
-- O piso proposto é nível 2 (Laranja).
-- O paciente pode ser promovido gradualmente, mas sua classificação original e seu SLA original permanecem inalterados.
-- A política e seus parâmetros devem ser configuráveis e testáveis com relógio simulado.
+Parâmetros propostos: `K = 1` e `PISO = 2` (Laranja). **Pendente de validação da equipe.**
 
-**Pendente de validação:** `K = 1` e `PISO = 2` são recomendações do planejamento, não decisões confirmadas. A garantia contra starvation depende também do fluxo de chegada de pacientes vermelhos; não se deve prometer espera máxima absoluta sem explicitar essa condição.
+**Exemplo numérico — Azul (SLA 240, K = 1):**
 
-## 6. Atendimento
+| Espera | Promoções | Nível efetivo |
+|---|---:|---:|
+| 0–239 min | 0 | 5 |
+| 240–479 min | 1 | 4 |
+| 480–719 min | 2 | 3 |
+| ≥ 720 min | 3 | 2 (piso) |
 
-1. O serviço consulta o relógio e solicita à fila o próximo paciente.
-2. A fila seleciona o paciente de melhor prioridade efetiva, sem a interface manipular suas estruturas internas.
-3. O serviço calcula o tempo de espera entre chegada e início do atendimento.
-4. O serviço compara a espera com o SLA da classificação original.
-5. O paciente é retirado da fila e é registrado um evento `ATENDIMENTO`, com instante, espera, SLA, nível efetivo e tamanho da fila após a retirada.
-6. Fila vazia deve resultar em exceção de domínio específica, tratada pela interface com mensagem compreensível.
+O Azul chega ao piso com **3 promoções, em 720 min**. Um Verde (SLA 120) é promovido aos 120 e aos 240 min; um Amarelo (SLA 60), aos 60 min. Laranja e Vermelho nunca são promovidos.
 
-## 7. SLA
+**Desempate no piso (decisão consciente):** ao chegar ao nível 2, o paciente envelhecido disputa com os Laranjas por ordem de chegada. Exemplo: um Amarelo chega às 08:00 e um Laranja às 08:30. Às 09:10, o Amarelo (nível efetivo 2, chegou antes) é chamado primeiro, embora o Laranja já tenha passado do seu SLA de 10 min. A alternativa — desempatar pelo nível original — foi rejeitada: com fluxo contínuo de Laranjas, o paciente envelhecido nunca venceria e a starvation voltaria.
+
+**Garantia:** todo paciente chega ao piso em tempo limitado, no máximo `(nivel_base - PISO) * K * SLA`. Daí em diante, só é ultrapassado por Vermelhos e por quem chegou antes dele ao mesmo nível. A espera é limitada **desde que a chegada de Vermelhos não ocupe toda a capacidade de atendimento**; não se promete espera máxima absoluta.
+
+## 6. Avanço do tempo e eventos de transição
+
+O nível efetivo é calculado sob demanda, mas a auditoria precisa registrar promoções e atrasos no instante em que ocorrem. Por isso:
+
+1. O relógio simulado **só avança** por `SimulacaoService.avancar_relogio(minutos)`: botão, modo automático ou cenário.
+2. Nesse passo, para cada paciente aguardando, o serviço calcula no intervalo `(início, fim]`:
+    - as **promoções**, cujos instantes são `chegada + k * K * SLA` → evento `PROMOCAO_AGING` com esse instante exato;
+    - o **vencimento do prazo** `limite_sla = chegada + SLA`, se cair em `[início, fim)` → evento `ATRASO_SLA` com instante = `limite_sla`, uma única vez por paciente.
+3. Os eventos são gravados em ordem de instante, numa transação; **só depois do commit** o relógio avança.
+4. Avançar 720 min de uma vez ou em vários passos gera exatamente os mesmos eventos.
+
+## 7. Atendimento
+
+1. O serviço consulta o relógio e pede à fila o próximo paciente (`proximo`), **sem retirá-lo**.
+2. O serviço calcula o tempo de espera entre chegada e início do atendimento e compara com o SLA da classificação original.
+3. Grava o evento `ATENDIMENTO` (instante, espera, SLA, nível efetivo, estado da fila) e a linha da tabela `atendimento`, numa transação.
+4. **Somente após o commit**, retira o paciente da fila (`retirar_proximo`, O(1)).
+5. Fila vazia resulta em `FilaVaziaError`, tratada pela interface com mensagem compreensível.
+
+O atendimento é instantâneo para a fila: o paciente sai dela ao ser chamado. A capacidade do serviço é modelada nos cenários como taxa de atendimentos (ex.: 1 a cada 6 min).
+
+## 8. SLA
 
 - Espera atual: `agora - chegada`, em minutos simulados.
 - Espera final: `inicio_atendimento - chegada`.
 - Um paciente aguardando está com SLA estourado quando `espera_atual > SLA_original`.
 - Um atendimento descumpre o SLA quando `espera_final > SLA_original`.
 - O aging não altera o SLA original.
-- O comparador (`>` ou `>=`) deve ser aplicado de forma consistente e coberto por testes de fronteira.
+- O comparador é sempre `>`: espera igual ao SLA está **dentro** do prazo. Testes de fronteira cobrem esse caso.
 
-## 8. Remoção
+## 9. Remoção e auditoria
 
-Um paciente pode ser removido sem atendimento, por exemplo, em caso de desistência ou erro de cadastro. A remoção deve:
-- identificar o paciente pelo ID;
-- removê-lo da fila;
-- registrar `REMOCAO`, com instante e motivo;
-- não criar registro de atendimento.
+**Remoção:** um paciente pode sair sem atendimento, com motivo de uma lista controlada (`DESISTENCIA` ou `ERRO_CADASTRO`). A remoção identifica o paciente pelo ID, grava `REMOCAO` com instante e motivo, retira o paciente da fila após o commit e não cria registro de atendimento.
 
-**Recomendação:** restringir o motivo a uma lista controlada, evitando texto livre inconsistente.
+**Auditoria:** toda mudança relevante gera um evento append-only — `ENTRADA`, `PROMOCAO_AGING`, `ATENDIMENTO`, `REMOCAO` e `ATRASO_SLA`. Cada evento guarda o **estado da fila logo após ele**: a quantidade de pacientes de cada cor e o total.
 
-## 9. Auditoria
+O histórico nunca é apagado ou atualizado: *triggers* no `sql/schema.sql` bloqueiam `UPDATE` e `DELETE` na tabela `evento_fila`. Correções são representadas por novos eventos. Instantes são gravados em texto ISO-8601 (`YYYY-MM-DDTHH:MM:SS`), sempre do relógio simulado.
 
-Toda mudança relevante deve gerar evento append-only:
-- `ENTRADA`;
-- `PROMOCAO_AGING`;
-- `ATENDIMENTO`;
-- `REMOCAO`;
-- `ATRASO_SLA`.
+## 10. Exemplo de trilha de auditoria
 
-O histórico não deve ser apagado ou atualizado para “corrigir” eventos anteriores. Correções devem ser representadas por novos eventos, quando aplicável. O registro do evento e a alteração persistida relacionada devem ocorrer na mesma transação.
+Azul que chega às 08:00 e é atendido às 20:00 (cenário da seção 5):
 
-O tamanho da fila deve ser registrado nos eventos de entrada e atendimento, conforme exigência destacada no planejamento.
+| Instante | Evento | Nível efetivo | Detalhes | Fila após |
+|---|---|---:|---|---:|
+| 08:00 | `ENTRADA` | 5 | cor = AZUL | 1 |
+| 12:00 | `PROMOCAO_AGING` | 4 | espera 240 min | 1 |
+| 12:00 | `ATRASO_SLA` | 4 | SLA 240 min | 1 |
+| 16:00 | `PROMOCAO_AGING` | 3 | espera 480 min | 1 |
+| 20:00 | `PROMOCAO_AGING` | 2 | espera 720 min | 1 |
+| 20:00 | `ATENDIMENTO` | 2 | espera 720 min; SLA descumprido | 0 |
 
-## 10. Critérios mínimos de aceite
+O `logs.sql` gerado pela aplicação contém o catálogo de cores, os pacientes, os eventos e os atendimentos nessa ordem, dentro de uma transação, e executa em um banco vazio criado pelo `schema.sql`.
+
+## 11. Critérios mínimos de aceite
 
 - [ ] Vermelho é sempre priorizado sobre os demais níveis.
 - [ ] FIFO é respeitado dentro do mesmo nível efetivo.
 - [ ] O desempate final usa ID crescente.
 - [ ] Aging altera apenas o nível efetivo, não a classificação nem o SLA original.
+- [ ] Um Azul chega ao piso em 720 min (K = 1, piso = 2).
+- [ ] Sem aging, com mais chegadas de Laranja do que capacidade, o Azul nunca é atendido (T1).
+- [ ] Avançar o relógio em um ou vários passos gera os mesmos eventos de promoção e atraso.
 - [ ] Fila vazia é tratada sem erro não controlado na interface.
 - [ ] Remoção não gera atendimento e produz evento de auditoria.
-- [ ] Entrada e atendimento registram o tamanho da fila após a operação.
+- [ ] Todo evento registra o estado da fila por cor após a operação.
+- [ ] Nenhuma mudança na fila em memória acontece antes do commit no banco.
 - [ ] Os cálculos usam relógio injetável para testes determinísticos.
 - [ ] Os parâmetros pendentes foram validados antes da entrega final.
