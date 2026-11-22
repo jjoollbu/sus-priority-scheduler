@@ -1,127 +1,179 @@
-# Wireframe da interface Streamlit
+# Interface Streamlit — tela do plantão
 
-> **Status: wireframe v0.1 para o Marco 1.** Esboço de conteúdo e disposição, sem estética. Cada página chama apenas serviços de aplicação; nenhuma ordena a fila nem acessa o banco direto.
+> **Status: v1.0, alinhada a `app/main.py` (22/11/2026).** Substitui o wireframe v0.1, que previa 5 páginas; a implementação reúne tudo numa página só, "Triagem — Plantão". Esboço de conteúdo e disposição, sem estética; os números são apenas exemplos.
 
-Navegação: menu lateral do Streamlit com as 5 páginas (`app/pages/`). Em todas as páginas, a barra lateral mostra o **relógio simulado** e os controles de tempo.
+Executar: `streamlit run app/main.py`.
 
-```text
-┌─ Barra lateral (todas as páginas) ─┐
-│ Relógio simulado: 24/11 08:40      │
-│ [ +10 min ]  [ +1 h ]              │
-│ Modo automático   [■ ligado]       │
-│ Avanço por ciclo  [===o---] 10 min │
-│ Política: Aging (K=1, piso=2)      │
-└────────────────────────────────────┘
-```
+A tela só exibe e dispara ações. A ordem de chamada vem da `FilaPrioridade`, o fluxo de chegadas e atendimentos vem do `SimuladorPlantao`, e o histórico é lido do banco (`dados/triagem.db`).
 
-## 1. Dashboard
-
-Objetivo: visão geral da fila em tempo real. Atualiza sozinho no modo automático (`st.fragment(run_every=...)`).
+## 1. Barra lateral
 
 ```text
-┌──────────────┬──────────────┬──────────────┬──────────────┐
-│ Aguardando   │ Em atraso    │ SLA cumprido │ Espera média │
-│     12       │   3 ⚠        │    81 %      │   34 min     │
-└──────────────┴──────────────┴──────────────┴──────────────┘
-┌─ Pacientes aguardando por cor ─────┐ ┌─ % SLA cumprido por cor ───────────┐
-│ Vermelho ▌ 0                       │ │ Vermelho ████████████ 100 %        │
-│ Laranja  ██████ 5                  │ │ Laranja  ████████░░░░  70 %        │
-│ Amarelo  ████ 3                    │ │ Amarelo  ██████████░░  85 %        │
-│ Verde    ██ 2                      │ │ Verde    ███████████░  95 %        │
-│ Azul     ██ 2                      │ │ Azul     ████████████ 100 %        │
-└────────────────────────────────────┘ └────────────────────────────────────┘
+┌─ Parâmetros do plantão ──────────────────────┐
+│ Chegadas por hora (demanda)  [====o----] 15  │
+│ Médicos atendendo            [==o------]  2  │
+│ Semente do sorteio           [ 42 ]          │
+│ Cada consulta dura um tempo sorteado entre   │
+│ 5 e 15 min (média 10 min).                   │
+│ ⚠️ Demanda 15/h × capacidade média 12/h      │
+│    (2 médicos, consulta média de 10 min) —   │
+│    125% de ocupação: plantão sobrecarregado. │
+├─ Regra da fila ──────────────────────────────┤
+│ Usar aging (anti-starvation)      [ ○ ]      │
+│ Chegadas automáticas              [ ● ]      │
+│ [ Reiniciar plantão ]                        │
+│ [ Carregar cenário de starvation ]           │
+│ O cenário coloca 1 Azul e 6 Laranjas na fila.│
+│ Regra atual: sem aging                       │
+└──────────────────────────────────────────────┘
 ```
 
-Componentes: `st.metric`, `st.columns`, `st.bar_chart`.
+- Mudar a chave de aging ou qualquer parâmetro **reinicia** o plantão e cria uma linha nova na tabela `plantao`.
+- A ocupação aparece em verde (✅ a equipe dá conta) ou amarelo (⚠️ sobrecarregado).
 
-## 2. Fila e Atendimento
+Componentes: `st.slider`, `st.number_input`, `st.toggle`, `st.button`, `st.success` / `st.warning`.
 
-Objetivo: cadastrar, atender e remover pacientes; ver a fila na ordem de atendimento.
+## 2. Corpo da página
+
+### 2.1 Cabeçalho e relógio
 
 ```text
-┌─ Novo paciente ───────────────────────────────────────────────┐
-│ Nome [________________]  Idade [__]  Queixa [_______________] │
-│ Classificação [ Amarelo ▾ ]                    [ Registrar ]  │
-└───────────────────────────────────────────────────────────────┘
-[ Atender próximo ]
+Triagem — Plantão
+Os pacientes chegam sozinhos e os médicos chamam sempre o mais grave. [...]
+Depois ligue o aging na barra lateral e compare.
 
-Fila — ordem de atendimento atual
-┌───┬────┬──────────────┬──────────┬────────────────┬────────┬──────────┐
-│ # │ ID │ Nome         │ Cor orig.│ Nível efetivo  │ Espera │ SLA      │
-├───┼────┼──────────────┼──────────┼────────────────┼────────┼──────────┤
-│ 1 │ 7  │ Paciente 07  │ Laranja  │ 2              │ 12 min │ ⚠ atraso │
-│ 2 │ 3  │ Paciente 03  │ Azul     │ 2 (promovido)  │ 730 min│ ⚠ atraso │
-│ 3 │ 9  │ Paciente 09  │ Amarelo  │ 3              │ 20 min │ ok       │
-└───┴────┴──────────────┴──────────┴────────────────┴────────┴──────────┘
-Remover paciente: ID [__]  Motivo [ Desistência ▾ ]  [ Remover ]
+┌─────────────────┬──────────────────┬──────────────────────┐
+│ Hora simulada   │ Pacientes na fila│ Pacientes atendidos  │
+│ 24/11 14:00     │       31         │        66            │
+└─────────────────┴──────────────────┴──────────────────────┘
+Avançar o relógio
+[ +10 min ]  [ +1 hora ]  [ +4 horas ]  [ +12 horas ]
 ```
 
-Componentes: `st.form`, `st.selectbox`, `st.dataframe` (com `column_config`), `st.button`, `st.toast`, `st.error`.
-Mensagens: fila vazia → `st.error("Não há pacientes aguardando.")`; atendimento → `st.toast` com nome, espera e SLA.
+Componentes: `st.title`, `st.metric`, `st.columns`, `st.button` + `st.rerun`.
 
-## 3. Fairness
-
-Objetivo: mostrar o problema (starvation) e a solução (aging) lado a lado, com o mesmo cenário e a mesma semente, em simulações isoladas (não usa a fila real).
+### 2.2 Quem está esperando
 
 ```text
-Cenário [ Rajada de Laranjas ▾ ]  Semente [42]  Duração [16 h]  [ Comparar ]
-
-┌─ Sem aging ──────────────────────┐ ┌─ Com aging (K=1, piso=2) ─────────┐
-│ Azul atendido?  NÃO (starvation) │ │ Azul atendido?  SIM, aos 720 min   │
-│ Espera máx. Azul: > 960 min      │ │ Espera máx. Azul: 720 min          │
-│                                  │ │                                    │
-│ [gráfico: espera do Azul × tempo]│ │ [gráfico: nível efetivo × tempo]   │
-└──────────────────────────────────┘ └────────────────────────────────────┘
-Promoções registradas: 12:00 5→4 · 16:00 4→3 · 20:00 3→2
+┌──────────┬──────────┬──────────┬──────────┬──────────┐
+│🔴Vermelho│🟠 Laranja│🟡 Amarelo│🟢 Verde  │🔵 Azul   │
+│    0     │    1     │    6     │   15     │    9     │
+│ na fila  │ na fila ·│ na fila ·│ na fila ·│ na fila ·│
+│          │ mais     │ mais     │ mais     │ mais     │
+│          │ antigo há│ antigo há│ antigo há│ antigo há│
+│          │ 4 min    │ 22 min   │ 2h10     │ 5h40     │
+│          │          │          │⚠️ Prazo  │⚠️ Prazo  │
+│          │          │          │estourado │estourado │
+└──────────┴──────────┴──────────┴──────────┴──────────┘
 ```
 
-Componentes: `st.columns`, `st.line_chart`, `st.table`.
+Componentes: `st.columns(5)`, `st.container(border=True)`, `st.metric`.
 
-## 4. Cenários de estresse
-
-Objetivo: gerar muitas chegadas de forma reproduzível e observar as métricas.
+### 2.3 Fila de atendimento — ordem de chamada
 
 ```text
-Cenário [ Horário de pico ▾ ]
-Chegadas por hora [====o----] 40     Atendimentos por hora [===o-----] 30
-Semente [42]     Duração [8 h]                          [ Executar ]
-[████████████░░░░░░░░] 60 %
+Próximo a ser chamado: Lucas (🟠 Laranja), esperando há 4 min.
 
-Resultado: 320 chegadas · 240 atendidos · 80 aguardando
-SLA cumprido por cor: Vermelho 100 % · Laranja 62 % · Amarelo 70 % · ...
+┌──────┬──────────────┬───────────┬────────────────┬────────┬──────────────────────┬────────────┬──────────┐
+│Ordem │ Paciente     │Classific. │Prioridade atual│ Espera │ Situação             │Prazo usado │Chegou às │
+├──────┼──────────────┼───────────┼────────────────┼────────┼──────────────────────┼────────────┼──────────┤
+│ 1    │ Lucas (nº 58)│🟠 Laranja │ 2              │ 4 min  │✅ No prazo (faltam 6)│ ████░  40% │ 13:56    │
+│ 2    │ Ana (nº 21)  │🔵 Azul    │ ⬆️ 3 (era 5)   │ 8h05   │⚠️ Atrasado há 4h05   │ █████ 202% │ 05:55    │ ← fundo amarelo
+│ 3    │ Yara (nº 49) │🟡 Amarelo │ 3              │ 22 min │✅ No prazo (faltam 38)│ ██░░░  37% │ 13:38    │
+└──────┴──────────────┴───────────┴────────────────┴────────┴──────────────────────┴────────────┴──────────┘
+Linhas com fundo amarelo e ⬆️ na coluna Prioridade atual: pacientes promovidos pelo aging.
 ```
 
-Componentes: `st.selectbox`, `st.slider`, `st.number_input`, `st.progress`, `st.metric`.
+- Fila vazia: `st.info("Ninguém aguardando. Avance o relógio para chegarem pacientes.")`.
+- "Prazo usado" = espera ÷ SLA da cor; acima de 100% o prazo estourou.
 
-## 5. Histórico e Auditoria
+Componentes: `st.dataframe` com `Styler` (destaque das linhas promovidas) e `column_config` (`ProgressColumn`).
 
-Objetivo: rastrear qualquer paciente e exportar o `logs.sql`.
+### 2.4 Gráfico de espera
 
 ```text
-Buscar paciente por ID ou nome [__________]
-
-Eventos
-┌─────────┬────────────────┬───────┬──────────────────────────┬──────────┐
-│ Instante│ Evento         │ Nível │ Detalhes                 │ Fila após│
-├─────────┼────────────────┼───────┼──────────────────────────┼──────────┤
-│ 08:00   │ ENTRADA        │ 5     │ cor=AZUL                 │ 1        │
-│ 12:00   │ PROMOCAO_AGING │ 4     │ espera=240min            │ 1        │
-│ 12:00   │ ATRASO_SLA     │ 4     │ sla=240min               │ 1        │
-│ 20:00   │ ATENDIMENTO    │ 2     │ espera=720min;descumprido│ 0        │
-└─────────┴────────────────┴───────┴──────────────────────────┴──────────┘
-Atendimentos realizados: [tabela]
-[ Exportar logs.sql ]  → download do arquivo
+Há quanto tempo o paciente mais antigo de cada cor espera
+ horas │                                   ╱ Azul
+       │                         ╱────────╱
+       │               ╱────────╱      ___ Verde
+       │     ╱────────╱   ____────────
+       │____╱____────────────────────────── Amarelo / Laranja / Vermelho
+       └──────────────────────────────────── hora do plantão
+Uma linha que sobe sem parar indica um paciente que nunca é chamado (starvation).
+▸ Ver os dados do gráfico em tabela
 ```
 
-Componentes: `st.text_input`, `st.dataframe`, `st.download_button`.
+- Uma "foto" da fila a cada 10 min simulados (`Amostra`).
+- Cores das linhas com contraste ≥ 3:1 nos temas claro e escuro; tabela alternativa no expansor para leitor de tela.
 
-## Itens do planejamento cobertos
+Componentes: `st.line_chart`, `st.expander`, `st.dataframe`.
+
+### 2.5 Últimos acontecimentos e atendidos
+
+```text
+Últimos acontecimentos
+┌─────────────┬──────────────────────┬───────────────┬──────────┬──────┬──────────────────────────────┬──────────┐
+│ Instante    │ Evento               │ Paciente      │ Classif. │Nível │ Detalhes                     │ Fila após│
+├─────────────┼──────────────────────┼───────────────┼──────────┼──────┼──────────────────────────────┼──────────┤
+│ 24/11 14:00 │ 🩺 Atendimento       │ Lucas (nº 57) │🟠 Laranja│ 2    │ médico 1; espera 3 min; ...  │ 31       │
+│ 24/11 13:55 │ ⬆️ Promoção (aging)  │ Ana (nº 21)   │🔵 Azul   │ 3    │ espera 480 min; nível 4 -> 3 │ 32       │
+│ 24/11 13:50 │ ⚠️ Prazo estourado   │ Ivo (nº 40)   │🟢 Verde  │ 4    │ SLA 120 min                  │ 32       │
+└─────────────┴──────────────────────┴───────────────┴──────────┴──────┴──────────────────────────────┴──────────┘
+Lido do banco de dados (tabela evento_fila), do mais novo ao mais antigo.
+
+▸ Todos os atendidos (66)
+  Início · Médico · Paciente · Classificação · Prioridade no atendimento · Espera · Consulta · Situação
+```
+
+Componentes: `st.dataframe`, `st.expander`.
+
+### 2.6 Banco de dados e auditoria
+
+```text
+Banco de dados e auditoria
+Tudo é gravado em dados/triagem.db (SQLite). O histórico é append-only. Este é o plantão nº 3.
+
+Plantões gravados
+┌────────┬──────────────┬───────────┬────────┬───────────────┬──────────┬──────────┬─────────┐
+│Plantão │ Regra da fila│Chegadas/h │Médicos │Consulta (min) │Pacientes │Atendidos │ Eventos │
+│ 3      │ com aging    │ 15        │ 2      │ 5–15          │ 97       │ 66       │ 312     │
+│ 2      │ sem aging    │ 15        │ 2      │ 5–15          │ 97       │ 70       │ 280     │
+└────────┴──────────────┴───────────┴────────┴───────────────┴──────────┴──────────┴─────────┘
+Plantão [ nº 3 ▾ ]   Buscar paciente por número ou nome [ ex.: 7 ou Gabriela ]
+
+Ana (nº 21) — 🔵 Azul, chegou às 05:55
+[trilha de eventos do paciente: Entrada → Promoção → Prazo estourado → ... ]
+
+[ Exportar logs.sql do plantão nº 3 ]  → download de logs_plantao_3.sql
+```
+
+Componentes: `st.dataframe`, `st.selectbox`, `st.text_input`, `st.download_button`.
+
+## 3. Acessibilidade
+
+- A cor nunca aparece sozinha: o símbolo (🔴🟠🟡🟢🔵) vem sempre com o nome.
+- Destaque das linhas promovidas: texto escuro sobre amarelo-claro (contraste 9,9:1).
+- Valores dos sliders repetidos em texto de alto contraste na mensagem de ocupação.
+- Gráfico com alternativa em tabela; rótulos de métrica ocultos na tela, mas lidos por leitor de tela.
+- Idioma da página declarado como português.
+
+## 4. Exigências cobertas
 
 | Exigência | Onde aparece |
 |---|---|
-| Monitoramento em tempo real | Barra lateral (modo automático) + Dashboard |
-| Inserção de dados | Fila e Atendimento |
-| Tratamento contra starvation | Fairness |
-| Respeito a SLAs | Dashboard (% por cor), coluna SLA da fila |
-| Teste de estresse | Cenários de estresse |
-| Histórico e geração do SQL | Histórico e Auditoria |
+| Monitoramento em tempo real | Relógio, "Quem está esperando", fila e gráfico, atualizados a cada avanço do relógio |
+| Inserção de dados | Chegadas sorteadas pelo plantão e cenário de starvation (cadastro manual: pendente) |
+| Tratamento contra starvation | Chave "Usar aging" + "Carregar cenário de starvation"; linhas promovidas destacadas |
+| Respeito a SLAs | Colunas "Situação" e "Prazo usado"; aviso "Prazo estourado" por cor; eventos `ATRASO_SLA` |
+| Teste de estresse | Sliders de demanda e médicos; avanço de até 12 h por clique |
+| Histórico e geração do SQL | "Últimos acontecimentos", "Todos os atendidos" e "Banco de dados e auditoria" com exportação do `logs.sql` |
+
+## 5. Mudanças em relação ao wireframe v0.1
+
+| Wireframe v0.1 | Tela atual |
+|---|---|
+| 5 páginas (`app/pages/`) | Uma página com 6 seções |
+| Modo automático com avanço por ciclo | Botões de avanço (+10 min a +12 h); chegadas automáticas ligáveis |
+| Formulário de novo paciente e botão "Atender próximo" | Chegadas sorteadas e médicos que chamam sozinhos |
+| Remoção por ID e motivo | Pendente |
+| Página Fairness com "sem aging" e "com aging" lado a lado | Mesma tela; a comparação é feita alternando a chave de aging (cada execução vira um plantão gravado, comparável na tabela de plantões) |

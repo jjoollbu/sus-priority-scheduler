@@ -1,10 +1,10 @@
 # Regras de negócio — Simulador de filas de prioridade
 
-> **Status: proposta v0.3 para validação da equipe e do docente.** Este documento traduz o Planejamento Técnico v0.3 em regras testáveis. Os parâmetros numéricos não devem ser tratados como protocolo clínico oficial.
+> **Status: v1.0, alinhada ao código da `main` (22/11/2026).** Este documento traduz o Planejamento Técnico v0.3 em regras testáveis e registra como elas foram implementadas. Os parâmetros numéricos continuam pendentes de validação com o docente e não devem ser tratados como protocolo clínico oficial.
 
 ## 1. Objetivo e limites
 
-O sistema simula uma fila de atendimento com prioridades. Ele não realiza avaliação clínica, não recomenda classificação de risco e não substitui o Protocolo de Manchester nem a atuação de profissionais habilitados. A classificação do paciente fictício é informada manualmente pelo operador da simulação.
+O sistema simula uma fila de atendimento com prioridades. Ele não realiza avaliação clínica, não recomenda classificação de risco e não substitui o Protocolo de Manchester nem a atuação de profissionais habilitados. A classificação do paciente fictício é sorteada pelo simulador de plantão (ou definida pelo cenário), nunca calculada a partir de sintomas.
 
 As cores e os tempos abaixo são parâmetros acadêmicos configuráveis (`config.py`), sujeitos à validação da equipe e do docente.
 
@@ -12,7 +12,7 @@ As cores e os tempos abaixo são parâmetros acadêmicos configuráveis (`config
 
 - **Origem:** o Ministério da Saúde criou em 2004 a Política Nacional de Humanização (PNH), que inclui entre seus métodos o Acolhimento com Avaliação e Classificação de Risco (AACR). Depois, o Protocolo de Classificação de Risco de Manchester foi reconhecido e adotado no Brasil.
 - **Tempos-alvo:** as 5 cores e os tempos da seção 2 são os do Protocolo de Manchester usados na rede pública — por exemplo, pela Secretaria de Saúde de Minas Gerais: vermelho imediato, laranja 10 min, amarelo 60 min, verde 120 min e azul 240 min.
-- **Quem classifica:** no serviço real, a classificação de risco é atividade privativa do enfermeiro (Resolução Cofen nº 661/2021). Por isso, no simulador, a cor é informada pelo operador: o sistema não faz avaliação clínica.
+- **Quem classifica:** no serviço real, a classificação de risco é atividade privativa do enfermeiro (Resolução Cofen nº 661/2021). Por isso, no simulador, a cor vem pronta (sorteada ou definida pelo cenário): o sistema não faz avaliação clínica.
 - **Variações locais:** os tempos mudam entre protocolos e municípios (o POP de Classificação de Risco do Rio de Janeiro de 2024, por exemplo, usa 15 min para laranja e 30 min para amarelo; a cartilha da PNH usa 4 cores). Por isso os SLAs ficam em configuração.
 
 **Referências**
@@ -40,13 +40,17 @@ As cores e os tempos abaixo são parâmetros acadêmicos configuráveis (`config
 
 ## 3. Cadastro e entrada na fila
 
-1. O operador informa os dados do paciente fictício e seleciona uma classificação.
-2. O serviço cria o paciente com identificador único e instante de chegada obtido do relógio injetado.
-3. O serviço grava o paciente e o evento `ENTRADA` numa única transação.
-4. **Somente após o commit**, o paciente é inserido no fim da fila FIFO da sua classificação original.
-5. O evento registra o estado da fila logo após a operação (seção 9).
+1. O paciente fictício chega por um destes caminhos:
+    - **plantão automático:** a cada minuto simulado, chega um paciente com probabilidade `chegadas_por_hora / 60`; a cor é sorteada pela mistura de uma UPA (2% Vermelho, 13% Laranja, 30% Amarelo, 40% Verde, 15% Azul);
+    - **cenário de starvation:** 1 Azul e 6 Laranjas, um a cada 5 min;
+    - **cadastro manual:** previsto, ainda sem formulário na tela.
+2. O `SimuladorPlantao` cria o paciente com identificador único e instante de chegada obtido do relógio simulado.
+3. A fila valida a inserção (`validar_insercao`: id repetido ou chegada fora de ordem) **antes** de gravar qualquer coisa.
+4. O paciente e o evento `ENTRADA` são gravados numa única transação (`RegistroPlantao.registrar_entrada`).
+5. **Somente após o commit**, o paciente é inserido no fim da fila FIFO da sua classificação original.
+6. O evento registra o estado da fila logo após a operação (seção 9).
 
-A camada de interface não implementa essas regras: apenas valida campos de apresentação e chama o serviço de aplicação.
+A interface não implementa essas regras: apenas dispara ações no simulador. Com a mesma semente, o plantão gera exatamente as mesmas chegadas (reprodutível).
 
 ## 4. Ordenação e desempate
 
@@ -95,22 +99,26 @@ O Azul chega ao piso com **3 promoções, em 720 min**. Um Verde (SLA 120) é pr
 
 O nível efetivo é calculado sob demanda, mas a auditoria precisa registrar promoções e atrasos no instante em que ocorrem. Por isso:
 
-1. O relógio simulado **só avança** por `SimulacaoService.avancar_relogio(minutos)`: botão, modo automático ou cenário.
-2. Nesse passo, para cada paciente aguardando, o serviço calcula no intervalo `(início, fim]`:
-    - as **promoções**, cujos instantes são `chegada + k * K * SLA` → evento `PROMOCAO_AGING` com esse instante exato;
-    - o **vencimento do prazo** `limite_sla = chegada + SLA`, se cair em `[início, fim)` → evento `ATRASO_SLA` com instante = `limite_sla`, uma única vez por paciente.
-3. Os eventos são gravados em ordem de instante, numa transação; **só depois do commit** o relógio avança.
-4. Avançar 720 min de uma vez ou em vários passos gera exatamente os mesmos eventos.
+1. O relógio simulado **só avança** por `SimuladorPlantao.avancar(minutos)`, acionado pelos botões da tela (+10 min, +1 h, +4 h, +12 h). O tempo nunca volta.
+2. O simulador avança **minuto a minuto**. Em cada minuto, nesta ordem:
+    1. para cada paciente aguardando, se o nível efetivo mudou → evento `PROMOCAO_AGING` (instante = minuto atual, detalhe "nível X -> Y");
+    2. se o prazo venceu (`agora > chegada + SLA`) e ainda não foi registrado → evento `ATRASO_SLA` com instante = `limite_sla` exato, **uma única vez por paciente**;
+    3. sorteia uma chegada (se as chegadas automáticas estiverem ligadas);
+    4. cada médico livre chama o próximo da fila (seção 7).
+3. Cada evento é gravado numa transação antes de entrar no histórico em memória.
+4. Como as promoções acontecem em minutos inteiros (K × SLA é inteiro), avançar 720 min de uma vez ou em vários passos gera exatamente os mesmos eventos.
 
 ## 7. Atendimento
 
-1. O serviço consulta o relógio e pede à fila o próximo paciente (`proximo`), **sem retirá-lo**.
-2. O serviço calcula o tempo de espera entre chegada e início do atendimento e compara com o SLA da classificação original.
-3. Grava o evento `ATENDIMENTO` (instante, espera, SLA, nível efetivo, estado da fila) e a linha da tabela `atendimento`, numa transação.
-4. **Somente após o commit**, retira o paciente da fila (`retirar_proximo`, O(1)).
-5. Fila vazia resulta em `FilaVaziaError`, tratada pela interface com mensagem compreensível.
+1. Um médico livre pede à fila o próximo paciente (`proximo`), **sem retirá-lo**.
+2. O simulador calcula a espera entre chegada e início do atendimento e compara com o SLA da classificação original.
+3. Sorteia a duração da consulta, inteira e uniforme entre `CONSULTA_MIN_MINUTOS` (5) e `CONSULTA_MAX_MINUTOS` (15), média de 10 min. O sorteio usa um gerador separado do das chegadas, então a n-ésima consulta dura o mesmo com ou sem aging.
+4. Grava a linha da tabela `atendimento` (início, espera, nível efetivo, SLA, médico, duração) e o evento `ATENDIMENTO`, numa transação.
+5. **Somente após o commit**, retira o paciente da fila (`retirar_proximo`, O(1)).
+6. O médico fica ocupado até `início + duração` e só então chama o próximo.
+7. Fila vazia resulta em `FilaVaziaError`; o simulador só chama alguém quando há pacientes, e a tela mostra "Ninguém aguardando".
 
-O atendimento é instantâneo para a fila: o paciente sai dela ao ser chamado. A capacidade do serviço é modelada nos cenários como taxa de atendimentos (ex.: 1 a cada 6 min).
+O paciente sai da fila ao ser chamado. A capacidade do plantão é `médicos × 60 / consulta média`: o padrão de 2 médicos atende cerca de 12 pacientes/h contra 15 chegadas/h, uma UPA 25% acima da capacidade. Os parâmetros do plantão (política, chegadas/h, médicos, limites da consulta e semente) ficam gravados na tabela `plantao`.
 
 ## 8. SLA
 
@@ -125,9 +133,11 @@ O atendimento é instantâneo para a fila: o paciente sai dela ao ser chamado. A
 
 **Remoção:** um paciente pode sair sem atendimento, com motivo de uma lista controlada (`DESISTENCIA` ou `ERRO_CADASTRO`). A remoção identifica o paciente pelo ID, grava `REMOCAO` com instante e motivo, retira o paciente da fila após o commit e não cria registro de atendimento.
 
+> **Situação na implementação:** a fila já oferece `remover(paciente_id)` e o banco aceita o tipo `REMOCAO`, mas o enum `MotivoRemocao` e a ação na tela ainda não existem.
+
 **Auditoria:** toda mudança relevante gera um evento append-only — `ENTRADA`, `PROMOCAO_AGING`, `ATENDIMENTO`, `REMOCAO` e `ATRASO_SLA`. Cada evento guarda o **estado da fila logo após ele**: a quantidade de pacientes de cada cor e o total.
 
-O histórico nunca é apagado ou atualizado: *triggers* no `sql/schema.sql` bloqueiam `UPDATE` e `DELETE` na tabela `evento_fila`. Correções são representadas por novos eventos. Instantes são gravados em texto ISO-8601 (`YYYY-MM-DDTHH:MM:SS`), sempre do relógio simulado.
+O histórico nunca é apagado ou atualizado: *triggers* no `sql/schema.sql` bloqueiam `UPDATE` e `DELETE` nas tabelas `evento_fila` e `atendimento`. Correções são representadas por novos eventos. Instantes são gravados em texto ISO-8601 (`YYYY-MM-DDTHH:MM:SS`), sempre do relógio simulado.
 
 ## 10. Exemplo de trilha de auditoria
 
@@ -142,7 +152,7 @@ Azul que chega às 08:00 e é atendido às 20:00 (cenário da seção 5):
 | 20:00 | `PROMOCAO_AGING` | 2 | espera 720 min | 1 |
 | 20:00 | `ATENDIMENTO` | 2 | espera 720 min; SLA descumprido | 0 |
 
-O `logs.sql` gerado pela aplicação contém o catálogo de cores, os pacientes, os eventos e os atendimentos nessa ordem, dentro de uma transação, e executa em um banco vazio criado pelo `schema.sql`.
+O `logs.sql` gerado pela aplicação (`exportar_logs`, botão "Exportar logs.sql" na tela) contém o catálogo de cores, os plantões, os pacientes, os eventos e os atendimentos nessa ordem, dentro de uma transação, e executa em um banco vazio criado pelo `schema.sql`.
 
 ## 11. Critérios mínimos de aceite
 
