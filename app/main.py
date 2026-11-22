@@ -114,26 +114,32 @@ def iniciar_estado(com_aging: bool, config: ConfigPlantao) -> None:
 
 # ------------------------------------------------------------ barra lateral
 def parametros_plantao() -> ConfigPlantao:
-    """Sliders que definem demanda e capacidade do plantão."""
+    """Sliders que definem demanda e capacidade do plantão.
+
+    A duração da consulta não é escolhida: o simulador sorteia cada uma.
+    """
     with st.sidebar:
         st.header("Parâmetros do plantão")
         chegadas = st.slider("Chegadas por hora (demanda)", 4, 30, 15)
         medicos = st.slider("Médicos atendendo", 1, 5, 2)
-        consulta = st.slider("Minutos por consulta", 5, 30, 10)
         semente = st.number_input("Semente do sorteio", 0, 9999, 42, step=1)
         config = ConfigPlantao(
             chegadas_por_hora=chegadas,
             medicos=medicos,
-            duracao_consulta_min=consulta,
             semente=int(semente),
+        )
+        st.caption(
+            f"Cada consulta dura um tempo sorteado entre {config.consulta_min} e "
+            f"{config.consulta_max} min (média {config.consulta_media_min:g} min)."
         )
         carga = config.chegadas_por_hora / config.capacidade_por_hora
         # Repete os valores dos sliders em texto de alto contraste: o número
         # sobre o slider usa a cor do tema, com contraste baixo no modo escuro.
         texto = (
-            f"Demanda **{config.chegadas_por_hora:g}/h** × capacidade "
+            f"Demanda **{config.chegadas_por_hora:g}/h** × capacidade média "
             f"**{config.capacidade_por_hora:g}/h** ({config.medicos} médicos, "
-            f"{config.duracao_consulta_min} min por consulta) — {carga:.0%} de ocupação"
+            f"consulta média de {config.consulta_media_min:g} min) — "
+            f"{carga:.0%} de ocupação"
         )
         if carga > 1:
             st.warning(f"⚠️ {texto}: plantão **sobrecarregado**.")
@@ -416,6 +422,7 @@ def historico() -> None:
                         "Classificação": rotulo_cor_banco(r["cor"]),
                         "Prioridade no atendimento": r["nivel_efetivo"],
                         "Espera": horas_e_minutos(r["espera_min"]),
+                        "Consulta": f"{r['duracao_min']} min",
                         "Situação": (
                             "✅ No prazo" if r["dentro_do_sla"] else "⚠️ Atrasado"
                         ),
@@ -454,7 +461,9 @@ def auditoria() -> None:
                     ),
                     "Chegadas/h": p["chegadas_por_hora"],
                     "Médicos": p["medicos"],
-                    "Consulta (min)": p["duracao_consulta_min"],
+                    "Consulta (min)": (
+                        f"{p['consulta_min_minutos']}–{p['consulta_max_minutos']}"
+                    ),
                     "Pacientes": p["pacientes"],
                     "Atendidos": p["atendidos"],
                     "Eventos": p["eventos"],

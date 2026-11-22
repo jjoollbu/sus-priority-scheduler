@@ -23,7 +23,10 @@ CREATE TABLE IF NOT EXISTS plantao (
     politica              TEXT    NOT NULL CHECK (politica IN ('SEM_AGING', 'AGING')),
     chegadas_por_hora     REAL    NOT NULL CHECK (chegadas_por_hora >= 0),
     medicos               INTEGER NOT NULL CHECK (medicos >= 1),
-    duracao_consulta_min  INTEGER NOT NULL CHECK (duracao_consulta_min >= 1),
+    -- A duração de cada consulta é sorteada entre estes limites (minutos).
+    consulta_min_minutos  INTEGER NOT NULL CHECK (consulta_min_minutos >= 1),
+    consulta_max_minutos  INTEGER NOT NULL
+                          CHECK (consulta_max_minutos >= consulta_min_minutos),
     semente               INTEGER NOT NULL
 );
 
@@ -76,6 +79,7 @@ CREATE TABLE IF NOT EXISTS atendimento (
     nivel_efetivo  INTEGER NOT NULL CHECK (nivel_efetivo BETWEEN 1 AND 5),
     dentro_do_sla  INTEGER NOT NULL CHECK (dentro_do_sla IN (0, 1)),
     medico         INTEGER,  -- NULL quando a chamada é manual
+    duracao_min    INTEGER NOT NULL CHECK (duracao_min >= 1),  -- sorteada
     PRIMARY KEY (plantao_id, paciente_id),
     FOREIGN KEY (plantao_id, paciente_id) REFERENCES paciente (plantao_id, id)
 );

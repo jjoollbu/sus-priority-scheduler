@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from triagem.dominio.paciente import Paciente
 
@@ -17,6 +17,17 @@ class Atendimento:
     espera_min: float
     nivel_efetivo: int
     medico: int | None  # None quando a chamada é manual
+    duracao_min: int  # sorteada pelo simulador
+
+    def __post_init__(self) -> None:
+        """Recusa consulta sem duração."""
+        if self.duracao_min < 1:
+            raise ValueError("A consulta precisa durar ao menos 1 min.")
+
+    @property
+    def fim(self) -> datetime:
+        """Instante em que a consulta termina e o médico fica livre."""
+        return self.inicio + timedelta(minutes=self.duracao_min)
 
     @property
     def dentro_do_sla(self) -> bool:

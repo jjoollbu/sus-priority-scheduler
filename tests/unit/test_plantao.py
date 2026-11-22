@@ -25,14 +25,24 @@ def simulador(**config: object) -> SimuladorPlantao:
 
 
 class TestConfigPlantao:
-    def test_capacidade(self) -> None:
-        assert (
-            ConfigPlantao(medicos=3, duracao_consulta_min=15).capacidade_por_hora == 12
-        )
+    def test_capacidade_usa_a_duracao_media(self) -> None:
+        config = ConfigPlantao(medicos=3, consulta_min=10, consulta_max=20)
+        assert config.consulta_media_min == 15
+        assert config.capacidade_por_hora == 12
+
+    def test_padrao_consulta_entre_5_e_15_min(self) -> None:
+        config = ConfigPlantao()
+        assert (config.consulta_min, config.consulta_max) == (5, 15)
+        assert config.capacidade_por_hora == 12  # 2 médicos, média de 10 min
 
     @pytest.mark.parametrize(
         "parametros",
-        [{"chegadas_por_hora": 61}, {"medicos": 0}, {"duracao_consulta_min": 0}],
+        [
+            {"chegadas_por_hora": 61},
+            {"medicos": 0},
+            {"consulta_min": 0},
+            {"consulta_min": 10, "consulta_max": 9},
+        ],
     )
     def test_parametros_invalidos(self, parametros: dict[str, int]) -> None:
         with pytest.raises(ValueError):
@@ -60,17 +70,46 @@ class TestFluxo:
         sim.avancar(120)
         assert sim.eventos == []
 
+    def test_duracao_sorteada_dentro_dos_limites_e_varia(self) -> None:
+        sim = simulador(chegadas_por_hora=30)
+        sim.avancar(8 * 60)
+        duracoes = [a.duracao_min for a in sim.atendimentos]
+        assert all(5 <= d <= 15 for d in duracoes)
+        assert len(set(duracoes)) > 1  # não é um valor fixo
+
+    def test_mesma_semente_mesmas_duracoes(self) -> None:
+        a, b = simulador(semente=7), simulador(semente=7)
+        a.avancar(240)
+        b.avancar(240)
+        assert [x.duracao_min for x in a.atendimentos] == [
+            x.duracao_min for x in b.atendimentos
+        ]
+
     def test_medico_respeita_duracao_da_consulta(self) -> None:
-        sim = simulador(medicos=1, duracao_consulta_min=10, chegadas_por_hora=30)
+        sim = simulador(medicos=2, chegadas_por_hora=30)
         sim.avancar(300)
-        instantes = [a.inicio for a in sim.atendimentos]
-        intervalos = [b - a for a, b in zip(instantes, instantes[1:], strict=False)]
-        assert all(i >= timedelta(minutes=10) for i in intervalos)
+        for medico in (1, 2):
+            dele = [a for a in sim.atendimentos if a.medico == medico]
+            assert len(dele) > 5
+            # Só chama o próximo depois de terminar a consulta sorteada.
+            assert all(b.inicio >= a.fim for a, b in zip(dele, dele[1:], strict=False))
+
+    def test_duracao_fixa_quando_minimo_igual_ao_maximo(self) -> None:
+        sim = simulador(medicos=1, consulta_min=10, consulta_max=10)
+        sim.chegadas_automaticas = False
+        for _ in range(3):
+            sim.adicionar(
+                Paciente(sim.novo_id(), "Ana", 30, "febre", Cor.VERDE, INICIO)
+            )
+        sim.avancar(30)
+        inicios = [a.inicio for a in sim.atendimentos]
+        assert inicios == [INICIO + timedelta(minutes=m) for m in (1, 11, 21)]
 
     def test_capacidade_limita_atendimentos(self) -> None:
-        sim = simulador(medicos=2, duracao_consulta_min=10, chegadas_por_hora=30)
+        # Mesmo que todas as consultas saiam com o mínimo de 5 min.
+        sim = simulador(medicos=2, chegadas_por_hora=30)
         sim.avancar(60)
-        assert len(sim.atendimentos) <= 12
+        assert len(sim.atendimentos) <= 2 * 60 // 5
 
     def test_amostra_a_cada_10_min(self) -> None:
         sim = simulador()
@@ -99,7 +138,7 @@ class TestAcoesManuais:
 
     def test_promocao_gera_evento(self) -> None:
         # 1 médico ocupado 5 h com o Laranja: o Azul fica esperando e é promovido.
-        config = ConfigPlantao(medicos=1, duracao_consulta_min=300)
+        config = ConfigPlantao(medicos=1, consulta_min=300, consulta_max=300)
         sim = SimuladorPlantao(PoliticaAging(), RelogioSimulado(INICIO), config)
         sim.chegadas_automaticas = False
         sim.adicionar(Paciente(sim.novo_id(), "Ana", 30, "receita", Cor.AZUL, INICIO))

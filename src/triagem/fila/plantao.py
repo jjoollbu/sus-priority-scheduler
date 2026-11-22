@@ -15,8 +15,9 @@ from __future__ import annotations
 import random
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 
+from triagem.config import CONSULTA_MAX_MINUTOS, CONSULTA_MIN_MINUTOS
 from triagem.dominio.atendimento import Atendimento
 from triagem.dominio.enums import ClassificacaoRisco, TipoEvento
 from triagem.dominio.evento import EventoFila
@@ -56,24 +57,31 @@ QUEIXAS: dict[ClassificacaoRisco, str] = {
 class ConfigPlantao:
     """Parâmetros do fluxo: demanda (chegadas) e capacidade (médicos).
 
-    Padrão: 15 chegadas/h para 12 atendimentos/h (2 médicos, 10 min cada),
-    ou seja, uma UPA 25% acima da capacidade.
+    A duração de cada consulta é sorteada entre `consulta_min` e `consulta_max`
+    (padrão 5 a 15 min, de config.py). A tela não deixa escolher esses limites;
+    eles só existem aqui para os testes fixarem uma duração exata.
+
+    Padrão: 15 chegadas/h para cerca de 12 atendimentos/h (2 médicos, consulta
+    média de 10 min), ou seja, uma UPA 25% acima da capacidade.
     """
 
     chegadas_por_hora: float = 15.0
     medicos: int = 2
-    duracao_consulta_min: int = 10
+    consulta_min: int = CONSULTA_MIN_MINUTOS
+    consulta_max: int = CONSULTA_MAX_MINUTOS
     proporcao: dict[ClassificacaoRisco, float] = field(
         default_factory=lambda: dict(PROPORCAO_PADRAO)
     )
-    semente: int = 42  # mesma semente => mesmas chegadas (reprodutível)
+    semente: int = 42  # mesma semente => mesmas chegadas e durações (reprodutível)
 
     def __post_init__(self) -> None:
         """Recusa parâmetros que não fazem sentido."""
         if not 0 <= self.chegadas_por_hora <= 60:
             raise ValueError("Chegadas por hora devem estar entre 0 e 60.")
-        if self.medicos < 1 or self.duracao_consulta_min < 1:
-            raise ValueError("É preciso ao menos 1 médico e consulta de 1 min.")
+        if self.medicos < 1:
+            raise ValueError("É preciso ao menos 1 médico.")
+        if not 1 <= self.consulta_min <= self.consulta_max:
+            raise ValueError("A consulta dura ao menos 1 min e o mínimo <= máximo.")
         if (
             set(self.proporcao) != set(ClassificacaoRisco)
             or sum(self.proporcao.values()) <= 0
@@ -81,9 +89,14 @@ class ConfigPlantao:
             raise ValueError("A proporção precisa ter peso para as 5 cores.")
 
     @property
+    def consulta_media_min(self) -> float:
+        """Duração média da consulta sorteada (uniforme entre mínimo e máximo)."""
+        return (self.consulta_min + self.consulta_max) / 2
+
+    @property
     def capacidade_por_hora(self) -> float:
-        """Quantos pacientes a equipe consegue atender por hora."""
-        return self.medicos * 60 / self.duracao_consulta_min
+        """Quantos pacientes a equipe atende por hora, em média."""
+        return self.medicos * 60 / self.consulta_media_min
 
 
 class RegistroPlantao(ABC):
@@ -154,6 +167,9 @@ class SimuladorPlantao:
         self._fila = FilaPrioridade(politica)
         self._registro = registro
         self._sorteio = random.Random(self._config.semente)
+        # Gerador separado para as durações: assim a n-ésima consulta dura o
+        # mesmo com ou sem aging, e os sorteios de chegada não são afetados.
+        self._sorteio_consulta = random.Random(f"consulta-{self._config.semente}")
         self._proximo_id = 1
         self._medico_livre_em = [relogio.agora()] * self._config.medicos
         self._ultimo_nivel: dict[int, int] = {}  # para detectar promoções
@@ -240,6 +256,7 @@ class SimuladorPlantao:
             espera_min=paciente.tempo_espera(agora),
             nivel_efetivo=self._fila.nivel_efetivo(paciente, agora),
             medico=medico,
+            duracao_min=self._sortear_duracao(),
         )
         quem = f"médico {medico}" if medico else "chamada manual"
         prazo = "SLA cumprido" if atendimento.dentro_do_sla else "SLA descumprido"
@@ -248,7 +265,8 @@ class SimuladorPlantao:
             agora,
             paciente,
             atendimento.nivel_efetivo,
-            f"{quem}; espera {atendimento.espera_min:.0f} min; {prazo}",
+            f"{quem}; espera {atendimento.espera_min:.0f} min; "
+            f"consulta {atendimento.duracao_min} min; {prazo}",
             variacao=-1,
         )
         if self._registro:
@@ -277,13 +295,16 @@ class SimuladorPlantao:
             self._sortear_chegada(agora)
         for i, livre_em in enumerate(self._medico_livre_em):
             if livre_em <= agora and len(self._fila) > 0:
-                self.atender_proximo(medico=i + 1)
-                self._medico_livre_em[i] = agora + timedelta(
-                    minutes=self._config.duracao_consulta_min
-                )
+                self._medico_livre_em[i] = self.atender_proximo(medico=i + 1).fim
         minutos_passados = (agora - self._inicio).total_seconds() / 60
         if minutos_passados % INTERVALO_AMOSTRA_MIN == 0:
             self._amostrar()
+
+    def _sortear_duracao(self) -> int:
+        """Minutos da próxima consulta, uniforme entre o mínimo e o máximo."""
+        return self._sorteio_consulta.randint(
+            self._config.consulta_min, self._config.consulta_max
+        )
 
     def _sortear_chegada(self, agora: datetime) -> None:
         """Com probabilidade chegadas_por_hora / 60, chega 1 paciente."""

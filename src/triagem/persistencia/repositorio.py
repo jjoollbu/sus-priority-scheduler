@@ -44,13 +44,15 @@ class RepositorioPlantao(RegistroPlantao):
         with conexao:
             cursor = conexao.execute(
                 "INSERT INTO plantao (inicio, politica, chegadas_por_hora, medicos, "
-                "duracao_consulta_min, semente) VALUES (?, ?, ?, ?, ?, ?)",
+                "consulta_min_minutos, consulta_max_minutos, semente) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     iso(inicio),
                     politica.nome,
                     config.chegadas_por_hora,
                     config.medicos,
-                    config.duracao_consulta_min,
+                    config.consulta_min,
+                    config.consulta_max,
                     config.semente,
                 ),
             )
@@ -93,7 +95,8 @@ class RepositorioPlantao(RegistroPlantao):
         with self._conexao:
             self._conexao.execute(
                 "INSERT INTO atendimento (plantao_id, paciente_id, inicio, espera_min, "
-                "nivel_efetivo, dentro_do_sla, medico) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "nivel_efetivo, dentro_do_sla, medico, duracao_min) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     self._plantao_id,
                     atendimento.paciente.id,
@@ -102,6 +105,7 @@ class RepositorioPlantao(RegistroPlantao):
                     atendimento.nivel_efetivo,
                     int(atendimento.dentro_do_sla),
                     atendimento.medico,
+                    atendimento.duracao_min,
                 ),
             )
             self._inserir_evento(evento)
@@ -136,7 +140,7 @@ def listar_plantoes(conexao: sqlite3.Connection) -> list[sqlite3.Row]:
     return conexao.execute(
         """
         SELECT pl.id, pl.inicio, pl.politica, pl.chegadas_por_hora, pl.medicos,
-               pl.duracao_consulta_min, pl.semente,
+               pl.consulta_min_minutos, pl.consulta_max_minutos, pl.semente,
                (SELECT COUNT(*) FROM paciente p WHERE p.plantao_id = pl.id)
                    AS pacientes,
                (SELECT COUNT(*) FROM atendimento a WHERE a.plantao_id = pl.id)
@@ -181,7 +185,7 @@ def atendimentos(conexao: sqlite3.Connection, plantao_id: int) -> list[sqlite3.R
     return conexao.execute(
         """
         SELECT a.inicio, a.medico, a.paciente_id, p.nome, c.cor,
-               a.nivel_efetivo, a.espera_min, a.dentro_do_sla
+               a.nivel_efetivo, a.espera_min, a.dentro_do_sla, a.duracao_min
         FROM atendimento a
         JOIN paciente p ON p.plantao_id = a.plantao_id AND p.id = a.paciente_id
         JOIN classificacao c ON c.nivel = p.nivel

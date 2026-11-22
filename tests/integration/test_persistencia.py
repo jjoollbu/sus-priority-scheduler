@@ -79,7 +79,18 @@ class TestSchema:
         with pytest.raises(sqlite3.IntegrityError):
             conexao.execute(
                 "INSERT INTO plantao (inicio, politica, chegadas_por_hora, medicos, "
-                "duracao_consulta_min, semente) VALUES ('x', 'OUTRA', 1, 1, 1, 1)"
+                "consulta_min_minutos, consulta_max_minutos, semente) "
+                "VALUES ('x', 'OUTRA', 1, 1, 1, 1, 1)"
+            )
+
+    def test_banco_recusa_maximo_menor_que_minimo(
+        self, conexao: sqlite3.Connection
+    ) -> None:
+        with pytest.raises(sqlite3.IntegrityError):
+            conexao.execute(
+                "INSERT INTO plantao (inicio, politica, chegadas_por_hora, medicos, "
+                "consulta_min_minutos, consulta_max_minutos, semente) "
+                "VALUES ('x', 'AGING', 1, 1, 10, 9, 1)"
             )
 
 
@@ -91,6 +102,19 @@ class TestGravacao:
         )
         assert contar(conexao, "evento_fila") == len(sim.eventos)
         assert contar(conexao, "atendimento") == len(sim.atendimentos)
+
+    def test_grava_duracao_sorteada(self, conexao: sqlite3.Connection) -> None:
+        sim = plantao_gravado(conexao, horas=4)
+        gravadas = sorted(
+            r["duracao_min"]
+            for r in conexao.execute("SELECT duracao_min FROM atendimento")
+        )
+        assert gravadas == sorted(a.duracao_min for a in sim.atendimentos)
+        plantao = repositorio.listar_plantoes(conexao)[0]
+        assert (plantao["consulta_min_minutos"], plantao["consulta_max_minutos"]) == (
+            5,
+            15,
+        )
 
     def test_evento_guarda_fila_por_cor(self, conexao: sqlite3.Connection) -> None:
         plantao_gravado(conexao, horas=2)
@@ -113,7 +137,7 @@ def test_trilha_de_auditoria_do_azul(conexao: sqlite3.Connection) -> None:
 
     1 médico ocupado com um Laranja até as 20:00; o Azul espera e é promovido.
     """
-    config = ConfigPlantao(medicos=1, duracao_consulta_min=719)
+    config = ConfigPlantao(medicos=1, consulta_min=719, consulta_max=719)
     politica = PoliticaAging()
     repo = RepositorioPlantao.novo_plantao(conexao, politica, config, INICIO)
     sim = SimuladorPlantao(
