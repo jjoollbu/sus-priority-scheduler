@@ -1,7 +1,7 @@
 # Projeto A3 — Simulador de Filas de Prioridade
 
 Simulador acadêmico de filas de prioridade baseado em um cenário de triagem
-hospitalar inspirado no SUS/Protocolo de Manchester. Pacientes fictícios de 5
+hospitalar inspirado no SUS. Pacientes fictícios de 5
 cores chegam a um plantão, médicos chamam sempre o mais urgente e uma política
 de **aging** impede que os de prioridade baixa esperem para sempre
 (*starvation*). Toda mudança na fila é gravada numa trilha de auditoria SQL.
