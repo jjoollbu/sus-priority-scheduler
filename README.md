@@ -6,7 +6,6 @@ cores chegam a um plantão, médicos chamam sempre o mais urgente e uma polític
 de **aging** impede que os de prioridade baixa esperem para sempre
 (*starvation*). Toda mudança na fila é gravada numa trilha de auditoria SQL.
 
-> O sistema não faz avaliação clínica nem substitui o Protocolo de Manchester.
 > Cores, tempos e parâmetros são acadêmicos e configuráveis em
 > `src/triagem/config.py`. Só são usados dados fictícios.
 
